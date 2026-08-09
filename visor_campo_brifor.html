@@ -2191,17 +2191,43 @@ window.MAP_LAYER_TOMAS_INCENDIOS = {"type": "FeatureCollection", "features": [{"
         let userLocationMarker = null;
         let userAccuracyCircle = null;
 
+        let gpsActive = false;
+        let gpsWatchId = null;
+
         document.getElementById('btn-gps').addEventListener('click', () => {
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition((pos) => {
-                    const latlng = L.latLng(pos.coords.latitude, pos.coords.longitude);
-                    map.setView(latlng, 16);
-                    updateGpsPosition(pos);
-                }, (err) => {
-                    alert("Error obteniendo ubicación: " + err.message);
-                }, { enableHighAccuracy: true });
+            const btn = document.getElementById('btn-gps');
+            gpsActive = !gpsActive;
+            
+            if (gpsActive) {
+                btn.classList.add('active');
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition((pos) => {
+                        const latlng = L.latLng(pos.coords.latitude, pos.coords.longitude);
+                        map.setView(latlng, map.getZoom() < 16 ? 16 : map.getZoom());
+                        updateGpsPosition(pos);
+                    }, (err) => {
+                        alert("Error obteniendo ubicación: " + err.message);
+                        gpsActive = false;
+                        btn.classList.remove('active');
+                    }, { enableHighAccuracy: true });
+
+                    gpsWatchId = navigator.geolocation.watchPosition((pos) => {
+                        updateGpsPosition(pos);
+                    }, (err) => {
+                        console.error("GPS position watch error:", err);
+                    }, { enableHighAccuracy: true });
+                } else {
+                    alert("Geolocalización no soportada en este navegador.");
+                    gpsActive = false;
+                    btn.classList.remove('active');
+                }
             } else {
-                alert("Geolocalización no soportada en este navegador.");
+                btn.classList.remove('active');
+                if (gpsWatchId !== null) {
+                    navigator.geolocation.clearWatch(gpsWatchId);
+                    gpsWatchId = null;
+                }
+                gpsLayerGroup.clearLayers();
             }
         });
 
@@ -2612,8 +2638,8 @@ window.MAP_LAYER_TOMAS_INCENDIOS = {"type": "FeatureCollection", "features": [{"
                             gpsTrackPolygon.setLatLngs(gpsTrackPoints);
                         }
                         
-                        // Center map on user location
-                        map.setView(latlng, 17);
+                        // Center map on user location respecting their current zoom level
+                        map.setView(latlng, map.getZoom());
                         
                         // Update HUD text
                         const dist = calculateGpsTrackDistance();
