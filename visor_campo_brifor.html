@@ -1985,12 +1985,11 @@ window.MAP_LAYER_TOMAS_INCENDIOS = {"type": "FeatureCollection", "features": [{"
             document.getElementById('coords-display').innerText = `UTM 28N | X: ${utm.x.toFixed(1)} | Y: ${utm.y.toFixed(1)}`;
         });
 
-        // Floating click coordinates & navigation info popup
-        map.on('click', (e) => {
-            // Ignore if drawing or measuring
-            if (measureActive || (map.pm && map.pm.globalDrawModeEnabled())) return;
-            
-            const latlng = e.latlng;
+        // Floating coordinates & navigation info popup (Activated via Long Press / Hold)
+        let pressTimer = null;
+        const LONG_PRESS_DURATION = 1500; // 1.5 seconds hold duration
+
+        function showCoordinatesPopup(latlng) {
             const utm = latLonToUTM28N(latlng.lat, latlng.lng);
             
             // Calculate distance & bearing to GPS if active
@@ -2041,6 +2040,42 @@ window.MAP_LAYER_TOMAS_INCENDIOS = {"type": "FeatureCollection", "features": [{"
                 .setLatLng(latlng)
                 .setContent(popupContent)
                 .openOn(map);
+        }
+
+        function startPress(e) {
+            // Ignore if drawing or measuring
+            if (measureActive || (map.pm && map.pm.globalDrawModeEnabled())) return;
+            cancelPress();
+            
+            const latlng = e.latlng;
+            pressTimer = setTimeout(() => {
+                showCoordinatesPopup(latlng);
+                pressTimer = null;
+            }, LONG_PRESS_DURATION);
+        }
+
+        function cancelPress() {
+            if (pressTimer !== null) {
+                clearTimeout(pressTimer);
+                pressTimer = null;
+            }
+        }
+
+        // Listeners to detect hold/long press and cancel if drag/zoom occurs
+        map.on('mousedown', startPress);
+        map.on('mouseup', cancelPress);
+        map.on('movestart', cancelPress);
+        map.on('zoomstart', cancelPress);
+        map.on('dragstart', cancelPress);
+
+        // Natively handle mobile Chrome/Android long-press contextmenu trigger
+        map.on('contextmenu', (e) => {
+            if (e.originalEvent) {
+                e.originalEvent.preventDefault();
+            }
+            if (measureActive || (map.pm && map.pm.globalDrawModeEnabled())) return;
+            cancelPress();
+            showCoordinatesPopup(e.latlng);
         });
 
         // --- Drawing Tools (Geoman) ---
