@@ -1725,11 +1725,51 @@ window.MAP_LAYER_TOMAS_INCENDIOS = {"type": "FeatureCollection", "features": [{"
             return Math.abs(area / 2.0);
         }
 
+        // Calculate bearing between two coordinates (in degrees 0-360)
+        function calculateBearing(lat1, lon1, lat2, lon2) {
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const lat1Rad = lat1 * Math.PI / 180;
+            const lat2Rad = lat2 * Math.PI / 180;
+            
+            const y = Math.sin(dLon) * Math.cos(lat2Rad);
+            const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
+            
+            let brng = Math.atan2(y, x) * 180 / Math.PI;
+            brng = (brng + 360) % 360;
+            return brng;
+        }
+
+        // Convert bearing degrees into a readable 16-point cardinal direction
+        function getCardinalDirection(bearing) {
+            const directions = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+            const index = Math.round(bearing / 22.5) % 16;
+            return directions[index];
+        }
+
+        // Convert Decimal Degrees to classic Degrees, Minutes, Seconds (DMS) format
+        function decDegToDMS(deg, isLat) {
+            const absolute = Math.abs(deg);
+            const degrees = Math.floor(absolute);
+            const minutesNotTruncated = (absolute - degrees) * 60;
+            const minutes = Math.floor(minutesNotTruncated);
+            const seconds = ((minutesNotTruncated - minutes) * 60).toFixed(1);
+            
+            let direction = "";
+            if (isLat) {
+                direction = deg >= 0 ? "N" : "S";
+            } else {
+                direction = deg >= 0 ? "E" : "W";
+            }
+            
+            return `${degrees}° ${minutes}' ${seconds}" ${direction}`;
+        }
+
         // Map Setup - force Leaflet to use HTML5 Canvas renderer to handle thousands of shapes smoothly on mobile
         const map = L.map('map', {
             zoomControl: false,
             maxZoom: 19,
-            renderer: L.canvas()
+            renderer: L.canvas(),
+            tap: false // Fixes touch click/tap event firing issues in Chrome on Android mobile devices
         }).setView([28.3, -16.6], 11); // Tenerife
 
         // Add metric scale control in bottom-left
@@ -1943,6 +1983,64 @@ window.MAP_LAYER_TOMAS_INCENDIOS = {"type": "FeatureCollection", "features": [{"
             if (measureActive) return;
             const utm = latLonToUTM28N(e.latlng.lat, e.latlng.lng);
             document.getElementById('coords-display').innerText = `UTM 28N | X: ${utm.x.toFixed(1)} | Y: ${utm.y.toFixed(1)}`;
+        });
+
+        // Floating click coordinates & navigation info popup
+        map.on('click', (e) => {
+            // Ignore if drawing or measuring
+            if (measureActive || (map.pm && map.pm.globalDrawModeEnabled())) return;
+            
+            const latlng = e.latlng;
+            const utm = latLonToUTM28N(latlng.lat, latlng.lng);
+            
+            // Calculate distance & bearing to GPS if active
+            let gpsDistStr = "";
+            if (gpsActive && userLocationMarker) {
+                const userLatLng = userLocationMarker.getLatLng();
+                const dist = userLatLng.distanceTo(latlng);
+                const distStr = dist > 1000 ? `${(dist / 1000).toFixed(2)} km` : `${dist.toFixed(0)} m`;
+                
+                const bearing = calculateBearing(userLatLng.lat, userLatLng.lng, latlng.lat, latlng.lng);
+                const cardinal = getCardinalDirection(bearing);
+                
+                gpsDistStr = `
+                    <div style="margin-top:6px; font-size:12px; color:#1a73e8; font-weight:600;">
+                        <i class="fa-solid fa-location-arrow"></i> A tu posición: ${distStr}<br>
+                        <i class="fa-solid fa-compass"></i> Rumbo: ${bearing.toFixed(0)}° (${cardinal})
+                    </div>
+                `;
+            } else {
+                gpsDistStr = `<div style="margin-top:6px; font-size:11px; color:#757575;"><i class="fa-solid fa-location-arrow"></i> GPS inactivo (no calcula distancia/rumbo)</div>`;
+            }
+            
+            const popupContent = `
+                <div style="font-family:system-ui, -apple-system, sans-serif; min-width:200px;">
+                    <strong style="font-size:13px; color:#212121;">Información del Punto</strong>
+                    <hr style="margin:6px 0; border:none; border-top:1px solid #e0e0e0;">
+                    <div style="font-size:11px; margin-top:4px;"><strong>UTM 28N (Métrica):</strong></div>
+                    <div style="font-size:11px; font-family:monospace; background:#f5f5f5; padding:4px; border-radius:4px; margin-top:2px;">
+                        X: ${utm.x.toFixed(1)}<br>
+                        Y: ${utm.y.toFixed(1)}
+                    </div>
+                    <div style="font-size:11px; margin-top:6px;"><strong>Geográficas Clásicas (DMS):</strong></div>
+                    <div style="font-size:11px; font-family:monospace; background:#f5f5f5; padding:4px; border-radius:4px; margin-top:2px;">
+                        Lat: ${decDegToDMS(latlng.lat, true)}<br>
+                        Lon: ${decDegToDMS(latlng.lng, false)}
+                    </div>
+                    ${gpsDistStr}
+                    <div style="margin-top:12px; display:flex;">
+                        <a href="https://www.google.com/maps/dir/?api=1&destination=${latlng.lat},${latlng.lng}" target="_blank" 
+                           style="flex:1; text-align:center; background:#1a73e8; color:white; border-radius:4px; padding:6px; font-size:12px; font-weight:600; text-decoration:none; box-shadow:0 1px 3px rgba(0,0,0,0.2); display:flex; align-items:center; justify-content:center; gap:6px;">
+                            <i class="fa-solid fa-diamond-turn-right"></i> Cómo llegar (Google Maps)
+                        </a>
+                    </div>
+                </div>
+            `;
+            
+            L.popup()
+                .setLatLng(latlng)
+                .setContent(popupContent)
+                .openOn(map);
         });
 
         // --- Drawing Tools (Geoman) ---
