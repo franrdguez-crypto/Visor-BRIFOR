@@ -1259,8 +1259,28 @@ svg.leaflet-image-layer.leaflet-interactive path {
             transition: color 0.2s;
         }
         
-        .panel-card .panel-title .toggle-icon-close:hover {
-            color: var(--accent-color);
+        /* Search Panel Tabs & Items Styling */
+        .tab-btn {
+            border-bottom: 2px solid transparent !important;
+            transition: all 0.3s;
+        }
+        .tab-btn.active {
+            border-bottom: 2px solid var(--accent-color) !important;
+            opacity: 1 !important;
+            color: var(--accent-color) !important;
+        }
+        .search-item {
+            padding: 6px 10px;
+            background: rgba(255,255,255,0.7);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+            border: 1px solid rgba(0,0,0,0.05);
+            color: var(--text-color);
+        }
+        .search-item:hover {
+            background: rgba(26, 115, 232, 0.1);
+            border-color: rgba(26, 115, 232, 0.2);
         }
 
         /* Print Media Query */
@@ -1479,6 +1499,52 @@ svg.leaflet-image-layer.leaflet-interactive path {
         </div>
         <div id="btn-print" class="circle-btn glass-panel" title="Descargar Mapa como Imagen">
             <i class="fa-solid fa-print"></i>
+        </div>
+    </div>
+
+    <!-- Search / Locator Panel (Top-Left, below Geoman) -->
+    <div class="panel-card glass-panel minimized" id="panel-search" style="
+        position: absolute;
+        top: 350px;
+        left: 10px;
+        z-index: 1000;
+        max-width: calc(100vw - 20px);
+    ">
+        <div class="panel-title" onclick="togglePanel('panel-search'); event.stopPropagation();">
+            <span>Buscar y Localizar</span>
+            <i class="fa-solid fa-magnifying-glass toggle-icon-open"></i>
+            <i class="fa-solid fa-chevron-down toggle-icon-close"></i>
+        </div>
+        <div class="panel-content" style="padding: 12px; box-sizing: border-box;">
+            <!-- Tabs Header -->
+            <div style="display: flex; border-bottom: 1px solid var(--border-color); margin-bottom: 12px; gap: 8px;">
+                <button id="tab-btn-toponym" class="tab-btn active" style="flex: 1; padding: 8px; font-size: 12px; font-weight: 600; border: none; background: none; color: var(--text-color); cursor: pointer;">Topónimos</button>
+                <button id="tab-btn-utm" class="tab-btn" style="flex: 1; padding: 8px; font-size: 12px; font-weight: 600; border: none; background: none; color: var(--text-color); cursor: pointer; opacity: 0.6;">Coordenadas UTM</button>
+            </div>
+            
+            <!-- Tab 1: Toponyms -->
+            <div id="tab-content-toponym">
+                <div style="display: flex; gap: 6px;">
+                    <input type="text" id="search-toponym-input" placeholder="Ej: La Esperanza, Santa Cruz..." style="flex: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.8); color: var(--text-color); font-size: 13px; outline: none; width: 100px;">
+                    <button class="btn" id="btn-search-toponym" style="padding: 8px 12px; font-size: 13px; background: var(--primary-color); color: white; border: none; border-radius: 6px; cursor: pointer;"><i class="fa-solid fa-magnifying-glass"></i></button>
+                </div>
+                <div id="search-results-list" style="max-height: 150px; overflow-y: auto; margin-top: 10px; font-size: 12px; display: none; flex-direction: column; gap: 6px;"></div>
+            </div>
+            
+            <!-- Tab 2: UTM Coordinates -->
+            <div id="tab-content-utm" style="display: none; flex-direction: column; gap: 10px;">
+                <div style="display: flex; gap: 10px;">
+                    <div style="flex: 1;">
+                        <label style="font-size: 11px; font-weight: 600; color: var(--text-color); display: block; margin-bottom: 4px;">Easting X (m)</label>
+                        <input type="number" id="utm-x-input" placeholder="Ej: 367200" style="width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.8); color: var(--text-color); font-size: 13px; outline: none;">
+                    </div>
+                    <div style="flex: 1;">
+                        <label style="font-size: 11px; font-weight: 600; color: var(--text-color); display: block; margin-bottom: 4px;">Northing Y (m)</label>
+                        <input type="number" id="utm-y-input" placeholder="Ej: 3154800" style="width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.8); color: var(--text-color); font-size: 13px; outline: none;">
+                    </div>
+                </div>
+                <button class="btn" id="btn-go-utm" style="width: 100%; padding: 10px; font-size: 13px; background: var(--primary-color); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;"><i class="fa-solid fa-crosshairs"></i> Centrar y Mostrar Punto</button>
+            </div>
         </div>
     </div>
 
@@ -2833,6 +2899,169 @@ window.MAP_LAYER_TOMAS_INCENDIOS = {"type": "FeatureCollection", "features": [{"
             }
             gpsTrackPaused = false;
         }
+
+        // --- Search & Locator (Toponym Search & Reverse UTM Projection) ---
+        let searchHighlightMarker = null;
+
+        // Reverse Transverse Mercator (UTM Zone 28N to WGS84 Lat/Lon)
+        function utm28NToLatLon(easting, northing) {
+            const zone = 28;
+            const k0 = 0.9996;
+            const a = 6378137.0; // semi-major axis
+            const f = 1 / 298.257223563; // flattening
+            const b = a * (1 - f);
+            const e2 = (a*a - b*b) / (a*a);
+            const e = Math.sqrt(e2);
+            
+            const e1 = (1 - Math.sqrt(1 - e2)) / (1 + Math.sqrt(1 - e2));
+            const x = easting - 500000.0;
+            const y = northing;
+            
+            const lon0 = ((zone * 6) - 183) * Math.PI / 180; // central meridian
+            const mu = y / (a * (1 - e2/4 - 3*e2*e2/64 - 5*e2*e2*e2/256));
+            
+            const phi1Rad = mu + (3*e1/2 - 27*e1*e1*e1/32) * Math.sin(2*mu) 
+                            + (21*e1*e1/16 - 55*e1*e1*e1*e1/32) * Math.sin(4*mu)
+                            + (151*e1*e1*e1/96) * Math.sin(6*mu);
+            
+            const N1 = a / Math.sqrt(1 - e2 * Math.sin(phi1Rad) * Math.sin(phi1Rad));
+            const T1 = Math.tan(phi1Rad) * Math.tan(phi1Rad);
+            const C1 = (e2 / (1 - e2)) * Math.cos(phi1Rad) * Math.cos(phi1Rad);
+            const R1 = a * (1 - e2) / Math.pow(1 - e2 * Math.sin(phi1Rad) * Math.sin(phi1Rad), 1.5);
+            const D = x / (N1 * k0);
+            
+            let lat = phi1Rad - (N1 * Math.tan(phi1Rad) / R1) * (
+                D*D/2 - (5 + 3*T1 + 10*C1 - 4*C1*C1 - 9*(e2 / (1 - e2))) * D*D*D*D/24
+                + (61 + 90*T1 + 298*C1 + 45*T1*T1 - 252*(e2 / (1 - e2)) - 3*C1*C1) * D*D*D*D*D*D/720
+            );
+            
+            let lon = lon0 + (
+                D - (1 + 2*T1 + C1) * D*D*D/6
+                + (5 - 2*C1 + 28*T1 - 3*C1*C1 + 8*(e2 / (1 - e2)) + 24*T1*T1) * D*D*D*D*D/120
+            ) / Math.cos(phi1Rad);
+            
+            return L.latLng(lat * 180 / Math.PI, lon * 180 / Math.PI);
+        }
+
+        // Place a temporary glowing marker on coordinates lookup
+        function highlightPoint(latlng, name) {
+            if (searchHighlightMarker) {
+                map.removeLayer(searchHighlightMarker);
+            }
+            
+            const glowIcon = L.divIcon({
+                html: `
+                    <div style="position:relative; width:20px; height:20px;">
+                        <div style="position:absolute; width:12px; height:12px; background:#ff1744; border:2px solid white; border-radius:50%; box-shadow:0 0 8px rgba(255,23,68,0.8); top:4px; left:4px; z-index:2;"></div>
+                        <div style="position:absolute; width:20px; height:20px; background:#ff1744; border-radius:50%; opacity:0.4; animation:pulse 1.5s infinite; z-index:1; top:0; left:0;"></div>
+                    </div>
+                `,
+                className: 'search-glow-icon',
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+            
+            searchHighlightMarker = L.marker(latlng, { icon: glowIcon }).addTo(map);
+            searchHighlightMarker.bindPopup(`<strong>Localizado:</strong><br>${name}`).openPopup();
+            
+            // Clean highlight marker on next map click
+            map.once('mousedown', () => {
+                if (searchHighlightMarker) {
+                    map.removeLayer(searchHighlightMarker);
+                    searchHighlightMarker = null;
+                }
+            });
+        }
+
+        // Tabs toggle listeners
+        document.getElementById('tab-btn-toponym').addEventListener('click', () => {
+            document.getElementById('tab-btn-toponym').classList.add('active');
+            document.getElementById('tab-btn-utm').classList.remove('active');
+            document.getElementById('tab-content-toponym').style.display = 'block';
+            document.getElementById('tab-content-utm').style.display = 'none';
+        });
+
+        document.getElementById('tab-btn-utm').addEventListener('click', () => {
+            document.getElementById('tab-btn-utm').classList.add('active');
+            document.getElementById('tab-btn-toponym').classList.remove('active');
+            document.getElementById('tab-content-utm').style.display = 'flex';
+            document.getElementById('tab-content-toponym').style.display = 'none';
+        });
+
+        // Toponym Search
+        document.getElementById('btn-search-toponym').addEventListener('click', performToponymSearch);
+        document.getElementById('search-toponym-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') performToponymSearch();
+        });
+
+        function performToponymSearch() {
+            const query = document.getElementById('search-toponym-input').value.trim();
+            if (!query) return;
+            
+            const resultsList = document.getElementById('search-results-list');
+            resultsList.innerHTML = '<div style="padding:6px; color:#757575;">Buscando en Canarias...</div>';
+            resultsList.style.display = 'flex';
+            
+            // Query OSM Nominatim restricted to Canary Islands bounding box
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&viewbox=-18.2,29.4,-13.3,27.5&bounded=1&limit=5`;
+            
+            fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                    resultsList.innerHTML = '';
+                    if (data.length === 0) {
+                        resultsList.innerHTML = '<div style="padding:6px; color:#ef4444;">No se encontraron resultados.</div>';
+                        return;
+                    }
+                    
+                    data.forEach(item => {
+                        const parts = item.display_name.split(',');
+                        const shortName = parts.slice(0, 3).join(',').trim();
+                        
+                        const div = document.createElement('div');
+                        div.className = 'search-item';
+                        div.innerText = shortName;
+                        div.style.marginTop = '4px';
+                        div.addEventListener('click', () => {
+                            const latlng = L.latLng(parseFloat(item.lat), parseFloat(item.lon));
+                            map.setView(latlng, 16);
+                            highlightPoint(latlng, shortName);
+                            togglePanel('panel-search');
+                        });
+                        resultsList.appendChild(div);
+                    });
+                })
+                .catch(err => {
+                    console.error(err);
+                    resultsList.innerHTML = '<div style="padding:6px; color:#ef4444;">Error de red (requiere internet para buscar).</div>';
+                });
+        }
+
+        // UTM X, Y Coordinates Locate
+        document.getElementById('btn-go-utm').addEventListener('click', () => {
+            const xVal = parseFloat(document.getElementById('utm-x-input').value);
+            const yVal = parseFloat(document.getElementById('utm-y-input').value);
+            
+            if (isNaN(xVal) || isNaN(yVal)) {
+                alert("Por favor, introduce valores numéricos válidos para X e Y.");
+                return;
+            }
+            
+            try {
+                const latlng = utm28NToLatLon(xVal, yVal);
+                
+                // Alert if outside Canary Islands coordinates
+                if (latlng.lat < 27.0 || latlng.lat > 30.0 || latlng.lng < -19.0 || latlng.lng > -13.0) {
+                    alert("Advertencia: Las coordenadas indicadas caen fuera del rango de Canarias.");
+                }
+                
+                map.setView(latlng, 16);
+                highlightPoint(latlng, `UTM 28N | X: ${xVal.toFixed(0)} | Y: ${yVal.toFixed(0)}`);
+                togglePanel('panel-search');
+            } catch (err) {
+                alert("Error calculando la proyección inversa: " + err.message);
+            }
+        });
 
         // --- GPX Import/Export (Client-Side) ---
         document.getElementById('btn-export-gpx').addEventListener('click', () => {
